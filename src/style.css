@@ -1,0 +1,92 @@
+:root {
+  color-scheme: only light;
+  font-family: "Bebas Neue", "Oswald", "Impact", sans-serif;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: radial-gradient(
+    circle at 20% 20%,
+    #2f2a12,
+    #120f08 65%,
+    #050404 100%
+  );
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+.overlay,
+.hud {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.overlay {
+  background: rgba(7, 6, 4, 0.75);
+  color: #efe2b0;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: clamp(1.2rem, 2vw, 2rem);
+  z-index: 2;
+}
+
+.overlay .card {
+  padding: 2.5rem 3rem;
+  border: 1px solid rgba(239, 226, 176, 0.3);
+  background: rgba(20, 18, 10, 0.8);
+  text-align: center;
+  max-width: 520px;
+}
+
+.overlay p {
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  letter-spacing: 0.04em;
+  margin-top: 1rem;
+  text-transform: none;
+  font-size: 0.95rem;
+  color: rgba(239, 226, 176, 0.7);
+}
+
+.hud {
+  pointer-events: none;
+  color: rgba(239, 226, 176, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  font-size: 0.75rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 1.5rem 2rem;
+}
+
+.hud.hidden,
+.overlay.hidden {
+  display: none;
+}
+
+.hud .label {
+  background: rgba(10, 9, 5, 0.6);
+  padding: 0.5rem 0.75rem;
+  border: 1px solid rgba(239, 226, 176, 0.25);
+}
