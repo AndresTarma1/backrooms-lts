@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Backrooms - Menú Principal</title>
+    <link rel="stylesheet" crossorigin href="/assets/index-DZRzxtsS.css">
+  </head>
+  <body>
+    <div class="menu-container">
+      <img src="/assets/Gemini_Generated_Image_ca5m6ica5m6ica5m-CwCBANYG.png" alt="Backrooms" class="bg-image" />
+      
+      <div class="menu-overlay"></div>
+      
+      <div class="menu-content">
+        <div class="menu-buttons">
+          <button class="menu-btn start-btn" onclick="startGame()">
+            <span>START</span>
+            <span class="icon">▶</span>
+          </button>
+          
+          <button class="menu-btn multiplayer-btn" disabled>
+            <span>MULTIPLAYER</span>
+            <span class="icon">⧗</span>
+          </button>
+          
+          <button class="menu-btn credits-btn" disabled>
+            <span>CRÉDITOS</span>
+            <span class="icon">◉</span>
+          </button>
+        </div>
+      </div>
+      
+      <div class="menu-footer">
+        <p>Encuentra la salida antes de que sea demasiado tarde...</p>
+      </div>
+    </div>
+
+    <audio id="menuBgm" src="/assets/room-404-DYIRUI9E.mp3" loop preload="auto" playsinline></audio>
+
+    <script>
+      const menuBgm = document.getElementById("menuBgm");
+      const AUDIO_UNLOCK_KEY = "menuAudioUnlocked";
+      let retryCount = 0;
+      let retryTimer = null;
+
+      function tryPlayMenuMusic(markUnlocked = false) {
+        if (!menuBgm) return;
+        menuBgm.volume = 0.45;
+        const playPromise = menuBgm.play();
+        if (playPromise) {
+          playPromise.then(() => {
+            if (markUnlocked) localStorage.setItem(AUDIO_UNLOCK_KEY, "1");
+            if (retryTimer) {
+              clearInterval(retryTimer);
+              retryTimer = null;
+            }
+          }).catch(() => {
+            // El navegador puede bloquear autoplay hasta interacción del usuario.
+          });
+        }
+      }
+
+      function unlockAndPlay() {
+        tryPlayMenuMusic(true);
+      }
+
+      document.addEventListener("pointerdown", unlockAndPlay, { passive: true });
+      document.addEventListener("keydown", unlockAndPlay);
+      document.addEventListener("touchstart", unlockAndPlay, { passive: true });
+
+      if (localStorage.getItem(AUDIO_UNLOCK_KEY) === "1") tryPlayMenuMusic();
+
+      retryTimer = setInterval(() => {
+        if (retryCount >= 6 || (menuBgm && !menuBgm.paused)) {
+          clearInterval(retryTimer);
+          retryTimer = null;
+          return;
+        }
+        retryCount += 1;
+        tryPlayMenuMusic();
+      }, 700);
+
+      window.addEventListener("focus", () => tryPlayMenuMusic());
+      window.addEventListener("pageshow", () => tryPlayMenuMusic());
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          tryPlayMenuMusic();
+        }
+      });
+
+      function startGame() {
+        if (menuBgm) {
+          menuBgm.pause();
+          menuBgm.currentTime = 0;
+        }
+        window.location.href = "/src/game.html";
+      }
+    </script>
+  </body>
+</html>

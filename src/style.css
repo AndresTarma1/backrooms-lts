@@ -1,0 +1,100 @@
+:root {
+  color-scheme: only light;
+  font-family: "Bebas Neue", "Oswald", "Impact", sans-serif;
+}
+
+html, body { width: 100%; height: 100%; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: radial-gradient(circle at 20% 20%, #2f2a12, #120f08 65%, #050404 100%);
+  overflow: hidden;
+}
+
+canvas { display: block; width: 100vw; height: 100vh; }
+
+.overlay, .hud {
+  position: fixed; left: 0; top: 0; width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.overlay {
+  background: rgba(7,6,4,0.75); color: #efe2b0; letter-spacing: 0.08em;
+  text-transform: uppercase; font-size: clamp(1.2rem,2vw,2rem); z-index: 2;
+}
+
+.overlay .card {
+  padding: 2.5rem 3rem; border: 1px solid rgba(239,226,176,0.3);
+  background: rgba(20,18,10,0.8); text-align: center; max-width: 520px;
+}
+
+.overlay p {
+  font-family: "Space Grotesk","Segoe UI",sans-serif; letter-spacing: 0.04em;
+  margin-top: 1rem; text-transform: none; font-size: 0.95rem; color: rgba(239,226,176,0.7);
+}
+
+.hud {
+  pointer-events: none; color: rgba(239,226,176,0.85);
+  text-transform: uppercase; letter-spacing: 0.2em; font-size: 0.75rem;
+  align-items: flex-start; justify-content: space-between; padding: 1.5rem 2rem;
+}
+
+.hud.hidden, .overlay.hidden { display: none; }
+#death-overlay.hidden { display: none; }
+
+#vitals-container {
+  position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 5px; pointer-events: none;
+}
+
+.vital-row {
+  display: flex; align-items: center; gap: 10px;
+}
+
+.vital-label {
+  font-family: monospace; font-size: 0.65rem; color: rgba(239,226,176,0.5);
+  min-width: 26px; text-align: right; letter-spacing: 0.15em;
+}
+
+.vital-bar {
+  width: 200px; height: 8px;
+  background: rgba(0,0,0,0.6); border: 1px solid rgba(239,226,176,0.15);
+  border-radius: 1px; overflow: hidden;
+}
+
+.vital-bar > div {
+  width: 100%; height: 100%;
+  transition: width 0.15s ease, background 0.3s ease;
+  border-radius: 1px;
+}
+
+#health-fill { background: #4a4; }
+#stamina-fill { background: #ca4; }
+#battery-fill { background: #4ac; }
+
+.vital-num {
+  font-family: monospace; font-size: 0.7rem; color: rgba(239,226,176,0.6);
+  min-width: 22px; text-align: center;
+}
+
+.hud .label {
+  background: rgba(10,9,5,0.6); padding: 0.5rem 0.75rem;
+  border: 1px solid rgba(239,226,176,0.25);
+}
+
+#death-overlay {
+  position: fixed; left: 0; top: 0; width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(80,0,0,0.75); color: #ff4444; letter-spacing: 0.08em;
+  text-transform: uppercase; font-size: clamp(1.5rem,3vw,3rem); z-index: 3;
+}
+
+#death-overlay .card {
+  padding: 2.5rem 3rem; border: 1px solid rgba(255,68,68,0.3);
+  background: rgba(20,5,5,0.9); text-align: center; max-width: 520px;
+}
+
+#death-overlay p {
+  font-family: "Space Grotesk","Segoe UI",sans-serif; letter-spacing: 0.04em;
+  margin-top: 1rem; text-transform: none; font-size: 0.95rem; color: rgba(255,68,68,0.7);
+}

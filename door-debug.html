@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Door Debug</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --panel: #151b23;
+        --text: #d9e0ea;
+        --muted: #95a2b3;
+        --accent: #55d6be;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: radial-gradient(circle at 20% 20%, #1a2633 0%, var(--bg) 42%);
+        color: var(--text);
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+
+      #app {
+        width: 100vw;
+        height: 100vh;
+      }
+
+      .panel {
+        position: fixed;
+        top: 14px;
+        left: 14px;
+        width: min(460px, calc(100vw - 28px));
+        max-height: calc(100vh - 28px);
+        overflow: auto;
+        background: color-mix(in srgb, var(--panel) 90%, transparent);
+        border: 1px solid #2a3645;
+        border-radius: 12px;
+        padding: 12px;
+        backdrop-filter: blur(6px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      }
+
+      .title {
+        margin: 0 0 8px;
+        font-size: 16px;
+      }
+
+      .sub {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      #status {
+        margin: 8px 0;
+        font-size: 13px;
+      }
+
+      .anim-list {
+        margin-top: 10px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .anim-item {
+        border: 1px solid #2f3c4d;
+        border-radius: 10px;
+        padding: 8px;
+        background: #10161e;
+      }
+
+      .anim-name {
+        margin: 0 0 6px;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 12px;
+        color: var(--accent);
+      }
+
+      .controls {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: 1px solid #3b4a5f;
+        background: #1a2431;
+        color: #d7e8ff;
+        padding: 6px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      button:hover {
+        border-color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <aside class="panel">
+      <h1 class="title">Diagnostico de Animaciones de Puerta</h1>
+      <p class="sub">Modelo: src/assets/models/door_wood.glb</p>
+      <p id="status">Cargando...</p>
+      <div id="animList" class="anim-list"></div>
+    </aside>
+    <script type="module" src="/src/doorDebugTemp.js"></script>
+  </body>
+</html>
