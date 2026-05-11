@@ -295,10 +295,7 @@ let obstacleMeshes = [];
 let obstaclePositions = [];
 let obstacleDamageCooldown = 0;
 let levelWalkableCells = [];
-let male = null;
-let maleMixer = null;
-let malePatrolPath = [];
-let malePathIndex = 0;
+let enemies = [];
 let level3Lights = [];
 let level3Ambience = { osc: null, gain: null, pulseId: null };
 let level3WallTexture = null;
@@ -418,14 +415,11 @@ function setupLevel(levelNum) {
   obstacleMeshes = [];
   obstaclePositions = [];
 
-  if (male) {
-    scene.remove(male);
-    if (maleMixer) maleMixer.stopAllAction();
-    male = null;
-    maleMixer = null;
-    malePatrolPath = [];
-    malePathIndex = 0;
+  for (const e of enemies) {
+    scene.remove(e.model);
+    if (e.mixer) e.mixer.stopAllAction();
   }
+  enemies = [];
   scene.children.filter(c => c.userData?._isDebug).forEach(c => scene.remove(c));
 
   // Configurar parámetros según el nivel
@@ -617,7 +611,7 @@ function setupLevel(levelNum) {
   scene.add(exitMesh);
 
   tryPlaceObstacles();
-  spawnEnemy(levelNum);
+  spawnEnemies(levelNum);
 
   // DEBUG: marcador verde EN la celda de inicio en todos los niveles
   const startWorld = cellToWorld(startMarkerCell.x, startMarkerCell.y);
@@ -749,49 +743,55 @@ function setupLevel(levelNum) {
 // Cargar el primer nivel
 setupLevel(1);
 
-// ─── SPAWN ENEMIGO ──────────────────────────────────────────────────────────
+// ─── SPAWN ENEMIGOS ─────────────────────────────────────────────────────────
 const SPAWN_CELLS = {
-  1: { x: 13, y: 11 },
-  2: { x: 12, y: 12 },
-  3: { x: 12, y: 12 },
-  4: { x: 13, y: 13 },
+  1: [{ x: 13, y: 11 }],
+  2: [{ x: 5, y: 7 }, { x: 17, y: 7 }],
+  3: [{ x: 4, y: 5 }, { x: 15, y: 17 }],
+  4: [{ x: 13, y: 5 }, { x: 5, y: 13 }, { x: 20, y: 20 }],
 };
 
-function spawnEnemy(levelNum) {
-  if (!maleModel || male) return;
-  try {
-    const model = maleModel.scene.clone();
-    model.traverse(child => {
-      if (child.isMesh) {
-        child.material = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.8, metalness: 0.1 });
-      }
-    });
+function spawnEnemies(levelNum) {
+  if (!maleModel) return;
+  const cells = SPAWN_CELLS[levelNum] || [{ x: 3, y: 3 }];
+  for (const spawnCell of cells) {
+    if (enemies.length >= cells.length) break;
+    try {
+      const model = maleModel.scene.clone();
+      model.traverse(child => {
+        if (child.isMesh) {
+          child.material = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.8, metalness: 0.1 });
+        }
+      });
 
-    const spawnCell = SPAWN_CELLS[levelNum] || { x: 3, y: 3 };
-    const spawnPos = cellToWorld(spawnCell.x, spawnCell.y);
-    model.position.set(spawnPos.x, 0, spawnPos.z);
-    model.userData.collisionRadius = 1.5;
+      const spawnPos = cellToWorld(spawnCell.x, spawnCell.y);
+      model.position.set(spawnPos.x, 0, spawnPos.z);
 
-    maleMixer = new THREE.AnimationMixer(model);
-    const idleClip = maleModel.animations.find(a => a.name === "animation.howler.idle");
-    if (idleClip) {
-      maleMixer.clipAction(idleClip).play();
+      const mixer = new THREE.AnimationMixer(model);
+      const idleClip = maleModel.animations.find(a => a.name === "animation.howler.idle");
+      if (idleClip) mixer.clipAction(idleClip).play();
+
+      scene.add(model);
+      const enemy = {
+        model,
+        mixer,
+        userData: {
+          collisionRadius: 1.5,
+          lastPathTime: 0,
+          path: [],
+          pathIndex: 0,
+          active: false,
+          lostSightTimer: 0,
+          currentAnim: "",
+          patrolTarget: null,
+          patrolTimer: 0,
+        }
+      };
+      enemies.push(enemy);
+      console.log("Nivel " + levelNum + ": Enemigo en (" + spawnCell.x + "," + spawnCell.y + ")");
+    } catch (e) {
+      console.error("Error spawning enemy:", e);
     }
-
-    scene.add(model);
-    male = model;
-    male.userData.lastPathTime = 0;
-    male.userData.path = [];
-    male.userData.pathIndex = 0;
-    male.userData.active = false;
-    male.userData.lostSightTimer = 0;
-    male.userData.currentAnim = "";
-    male.userData.patrolTarget = null;
-    male.userData.patrolTimer = 0;
-
-    console.log("Nivel " + levelNum + ": Enemigo agregado en (" + spawnCell.x + "," + spawnCell.y + ")");
-  } catch (e) {
-    console.error("Error spawning enemy:", e);
   }
 }
 
@@ -817,13 +817,13 @@ function hasLineOfSight(x1, y1, x2, y2, grid) {
 }
 
 // ─── CAMBIO DE ANIMACIÓN DEL ENEMIGO ────────────────────────────────────────
-function playMaleAnimation(name) {
-  if (!maleMixer || !male || male.userData.currentAnim === name) return;
-  male.userData.currentAnim = name;
-  maleMixer.stopAllAction();
+function playMaleAnimation(name, mixer, userData) {
+  if (!mixer || userData.currentAnim === name) return;
+  userData.currentAnim = name;
+  mixer.stopAllAction();
   const clip = maleModel.animations.find(a => a.name === name);
   if (clip) {
-    maleMixer.clipAction(clip).reset().play();
+    mixer.clipAction(clip).reset().play();
   }
 }
 
@@ -1306,7 +1306,7 @@ function animate(time) {
   attemptMove(delta);
   updateHealth(delta);
   updateStamina(delta, isRunning && stamina > 0);
-  updateBattery(delta);
+  updateBattery(delta, flashlightOn);
   if (obstacleDamageCooldown > 0) obstacleDamageCooldown -= delta;
 
   // Flash de daño
@@ -1343,143 +1343,125 @@ function animate(time) {
   if (isLocked || useDebugCamera) {
     updateFlashlight(elapsed);
 
-    if (!male) spawnEnemy(currentLevel);
+    if (enemies.length === 0 && maleModel) spawnEnemies(currentLevel);
 
-  if (male) {
-    const playerDist = Math.hypot(
-      playerRig.position.x - male.position.x,
-      playerRig.position.z - male.position.z
-    );
+  for (const enemy of enemies) {
+    const { model, mixer, userData: ud } = enemy;
 
-    const enemyCell = worldToCell(male.position);
+    const playerDist = Math.hypot(playerRig.position.x - model.position.x, playerRig.position.z - model.position.z);
+    const enemyCell = worldToCell(model.position);
     const playerCell = worldToCell(playerRig.position);
     const canSee = enemyCell && playerCell && hasLineOfSight(enemyCell.x, enemyCell.y, playerCell.x, playerCell.y, grid);
 
-    if (!male.userData.active && canSee && playerDist < 12.0) {
-      male.userData.active = true;
-      male.userData.lostSightTimer = 0;
+    if (!ud.active && canSee && playerDist < 12.0) {
+      ud.active = true;
+      ud.lostSightTimer = 0;
       console.log("Enemigo activado - te ha detectado!");
     }
 
-    if (male.userData.active) {
+    if (ud.active) {
       if (canSee && playerDist < 14.0) {
-        male.userData.lostSightTimer = 0;
+        ud.lostSightTimer = 0;
       } else {
-        male.userData.lostSightTimer = (male.userData.lostSightTimer || 0) + delta;
-        if (male.userData.lostSightTimer > 2.0) {
-          male.userData.active = false;
-          male.userData.path = [];
-          male.userData.pathIndex = 0;
-          playMaleAnimation("animation.howler.idle");
+        ud.lostSightTimer = (ud.lostSightTimer || 0) + delta;
+        if (ud.lostSightTimer > 2.0) {
+          ud.active = false;
+          ud.path = [];
+          ud.pathIndex = 0;
+          playMaleAnimation("animation.howler.idle", mixer, ud);
         }
       }
     }
 
-    // Movimiento compartido: chase o patrol
     let targetPos = null;
     let isMoving = false;
 
-    if (male.userData.active) {
-      playMaleAnimation("animation.howler.run");
-
+    if (ud.active) {
+      playMaleAnimation("animation.howler.run", mixer, ud);
       const pathRecalcInterval = 1.0;
-      if (playerDist > 2.0 && (!male.userData.lastPathTime || elapsed - male.userData.lastPathTime > pathRecalcInterval)) {
-        male.userData.lastPathTime = elapsed;
+      if (playerDist > 2.0 && (!ud.lastPathTime || elapsed - ud.lastPathTime > pathRecalcInterval)) {
+        ud.lastPathTime = elapsed;
         if (enemyCell && playerCell) {
           const newPath = aStar(enemyCell.x, enemyCell.y, playerCell.x, playerCell.y, grid);
           if (newPath && newPath.length > 1) {
-            male.userData.path = newPath.slice(1);
-            male.userData.pathIndex = 0;
+            ud.path = newPath.slice(1);
+            ud.pathIndex = 0;
           }
         }
       }
-
       if (playerDist < 2.5) {
         targetPos = { x: playerRig.position.x, z: playerRig.position.z };
       } else {
-        const path = male.userData.path;
-        if (path && path.length > 0 && male.userData.pathIndex < path.length) {
-          targetPos = cellToWorld(path[male.userData.pathIndex].x, path[male.userData.pathIndex].y);
+        const p = ud.path;
+        if (p && p.length > 0 && ud.pathIndex < p.length) {
+          targetPos = cellToWorld(p[ud.pathIndex].x, p[ud.pathIndex].y);
         } else {
           targetPos = { x: playerRig.position.x, z: playerRig.position.z };
         }
       }
       isMoving = true;
     } else {
-      // PATRULLAJE
-      male.userData.patrolTimer -= delta;
-      if (!male.userData.patrolTarget || male.userData.patrolTimer <= 0) {
+      ud.patrolTimer -= delta;
+      if (!ud.patrolTarget || ud.patrolTimer <= 0) {
         if (levelWalkableCells.length > 1) {
           let pick;
-          const enemyCell = worldToCell(male.position);
+          const eCell = worldToCell(model.position);
           let tries = 0;
           do {
             pick = levelWalkableCells[Math.floor(Math.random() * levelWalkableCells.length)];
             tries++;
-          } while (tries < 10 && pick && pick.x === enemyCell.x && pick.y === enemyCell.y);
+          } while (tries < 10 && pick && pick.x === eCell.x && pick.y === eCell.y);
           if (pick) {
-            const path = aStar(enemyCell.x, enemyCell.y, pick.x, pick.y, grid);
+            const path = aStar(eCell.x, eCell.y, pick.x, pick.y, grid);
             if (path && path.length > 1) {
-              male.userData.path = path.slice(1);
-              male.userData.pathIndex = 0;
+              ud.path = path.slice(1);
+              ud.pathIndex = 0;
             }
-            male.userData.patrolTarget = pick;
+            ud.patrolTarget = pick;
           }
         }
-        male.userData.patrolTimer = 4 + Math.random() * 6;
+        ud.patrolTimer = 4 + Math.random() * 6;
       }
-
-      const patrolPath = male.userData.path;
-      if (patrolPath && patrolPath.length > 0 && male.userData.pathIndex < patrolPath.length) {
-        targetPos = cellToWorld(patrolPath[male.userData.pathIndex].x, patrolPath[male.userData.pathIndex].y);
+      const patrolPath = ud.path;
+      if (patrolPath && patrolPath.length > 0 && ud.pathIndex < patrolPath.length) {
+        targetPos = cellToWorld(patrolPath[ud.pathIndex].x, patrolPath[ud.pathIndex].y);
         isMoving = true;
-        playMaleAnimation("animation.howler.run");
+        playMaleAnimation("animation.howler.run", mixer, ud);
       } else {
-        playMaleAnimation("animation.howler.idle");
+        playMaleAnimation("animation.howler.idle", mixer, ud);
       }
     }
 
     if (isMoving && targetPos) {
-      const dx = targetPos.x - male.position.x;
-      const dz = targetPos.z - male.position.z;
+      const dx = targetPos.x - model.position.x;
+      const dz = targetPos.z - model.position.z;
       const dist = Math.hypot(dx, dz);
-
-      if (dist > 0.01) {
-        male.rotation.y = Math.atan2(dx, dz) + Math.PI;
-      }
-
-      const moveCheckDist = male.userData.active ? playerDist : dist;
+      if (dist > 0.01) model.rotation.y = Math.atan2(dx, dz) + Math.PI;
+      const moveCheckDist = ud.active ? playerDist : dist;
       if (dist > 0.6 && moveCheckDist > 1.5) {
         const speed = MALE_SPEED * delta;
         const moveX = (dx / dist) * speed;
         const moveZ = (dz / dist) * speed;
-
-        const testX = male.position.x + moveX;
-        if (canMoveTo(new THREE.Vector3(testX, 0, male.position.z))) {
-          male.position.x = testX;
-        }
-
-        const testZ = male.position.z + moveZ;
-        if (canMoveTo(new THREE.Vector3(male.position.x, 0, testZ))) {
-          male.position.z = testZ;
-        }
+        const testX = model.position.x + moveX;
+        if (canMoveTo(new THREE.Vector3(testX, 0, model.position.z))) model.position.x = testX;
+        const testZ = model.position.z + moveZ;
+        if (canMoveTo(new THREE.Vector3(model.position.x, 0, testZ))) model.position.z = testZ;
       }
-
-      if (dist < 0.6 && male.userData.path && male.userData.pathIndex < male.userData.path.length) {
-        male.userData.pathIndex++;
-        if (male.userData.pathIndex >= male.userData.path.length && !male.userData.active) {
-          male.userData.patrolTarget = null;
-        }
+      if (dist < 0.6 && ud.path && ud.pathIndex < ud.path.length) {
+        ud.pathIndex++;
+        if (ud.pathIndex >= ud.path.length && !ud.active) ud.patrolTarget = null;
       }
     }
 
-    if (maleMixer) maleMixer.update(delta);
+    if (mixer) mixer.update(delta);
 
-    // Efecto glitch por proximidad del enemigo
+    // Glitch si algún enemigo está activo y cerca
     if (glitchOverlay) {
-      if (male.userData.active && playerDist < 8) {
+      const anyActiveNear = enemies.some(e => e.userData.active && Math.hypot(playerRig.position.x - e.model.position.x, playerRig.position.z - e.model.position.z) < 8);
+      const anyDangerClose = enemies.some(e => e.userData.active && Math.hypot(playerRig.position.x - e.model.position.x, playerRig.position.z - e.model.position.z) < 3.5);
+      if (anyActiveNear) {
         glitchOverlay.classList.remove('hidden');
-        if (playerDist < 3.5) {
+        if (anyDangerClose) {
           glitchOverlay.classList.add('danger');
           glitchOverlay.classList.remove('active');
         } else {
@@ -1492,8 +1474,9 @@ function animate(time) {
       }
     }
 
-    if (playerDist < (male.userData.collisionRadius || 1.2) && !isDead) {
-      playMaleAnimation("animation.howler.attack");
+    // Colisión con enemigo
+    if (playerDist < (ud.collisionRadius || 1.2) && !isDead) {
+      playMaleAnimation("animation.howler.attack", mixer, ud);
       isDead = true;
       deathTimer = 0;
       playDeath();
