@@ -1,8 +1,5 @@
 import "./style.css";
 import * as THREE from "three";
-import wallUrl from "./assets/textures/textura_amarilla.png";
-import brownWallUrl from "./assets/textures/textura_marron.png";
-import whiteWallUrl from "./assets/textures/textura_blanca.png";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
 import { GLTFLoader } from "three/examples/jsm/Addons.js";
@@ -10,10 +7,20 @@ import { generateMap } from "./mapGenerator.js";
 import { generateMapLevel2 } from "./mapGeneratorLevel2.js";
 import { generateMapLevel3 } from "./mapGeneratorLevel3.js";
 import { generateMapLevel4 } from "./mapGeneratorLevel4.js";
+import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 
 const overlay = document.querySelector(".overlay");
 const hud = document.querySelector(".hud");
-overlay?.remove();
+const loader = document.getElementById("loader");
+
+THREE.DefaultLoadingManager.onLoad = function () {
+  if (loader) {
+    loader.classList.add("hidden");
+  }
+  if (overlay) {
+    overlay.classList.remove("hidden");
+  }
+};
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x6b5a24);
@@ -44,18 +51,26 @@ const WALK_SPEED = 4.6;
 const RUN_SPEED = 6.8;
 const CROUCH_SPEED = 2.4;
 let isLocked = false;
+const MALE_SPEED = 5.5;   
 let isCrouching = false;
 let isRunning = false;
 let isGrounded = true;
 let verticalVelocity = 0;
 let currentEyeHeight = STAND_EYE_HEIGHT;
 let lockRetryAt = 0;
+let currentSpeed = 0;
+
+// ─── AUDIO ─────────────────────────────────────────────────────────────────
+const listener = new THREE.AudioListener();
+camera.add(listener);
+let humStarted = false;
 
 hud.classList.remove("hidden");
 
 controls.addEventListener("lock", () => {
   isLocked = true;
   hud.classList.remove("hidden");
+  if (overlay) overlay.classList.add("hidden");
   if (!humStarted) {
     listener.context.resume();
     humStarted = true;
@@ -65,7 +80,8 @@ controls.addEventListener("lock", () => {
 controls.addEventListener("unlock", () => {
   isLocked = false;
   lockRetryAt = performance.now() + 1200;
-  hud.classList.remove("hidden");
+  hud.classList.add("hidden");
+  if (overlay) overlay.classList.remove("hidden");
 });
 
 function tryLockControls() {
@@ -131,11 +147,104 @@ gltfLoader.load("/src/assets/models/flashlight.glb", (gltf) => {
   camera.add(model);
 });
 
+let maleModel = null;
+gltfLoader.load("/src/assets/models/perseguidor.glb",
+  (gltf) => {
+    console.log("perseguidor.glb loaded");
+    maleModel = gltf;
+    trySpawnEnemyLevel1();
+  },
+  undefined,
+  (err) => console.error("perseguidor.glb load error:", err)
+);
+
+// ─── MODELOS OBSTÁCULO ─────────────────────────────────────────────────────
+const objLoader = new OBJLoader();
+const obstacleModels = {};
+
+const OBSTACLE_CONFIG = {
+  2: { scale: 2.0, radius: 0.9, color: 0x8B4513, url: "/src/assets/models/obstaculo2.obj" },
+  3: { scale: 0.01, radius: 0.9, color: 0x5c3a1e, url: "/src/assets/models/obstaculo3.obj" },
+  4: { scale: 0.012, radius: 1.2, color: 0x666666, url: "/src/assets/models/obstaculo4.obj" },
+  5: { scale: 0.012, radius: 1.0, color: 0x2d5a1e, url: "/src/assets/models/obstaculo5.obj" },
+};
+
+async function loadObjModel(url, color = 0x444444) {
+  const text = await fetch(url).then(r => r.text());
+  const cleaned = text.replace(/^mtllib .+$/gm, '');
+  const group = objLoader.parse(cleaned);
+  group.traverse(child => {
+    if (child.isMesh) {
+      child.material = new THREE.MeshStandardMaterial({ color, roughness: 0.8, metalness: 0.2 });
+      child.castShadow = false;
+      child.receiveShadow = false;
+    }
+  });
+  return group;
+}
+
+const LEVEL_1_OBSTACLES = [
+  { x: 3, y: 1, file: 3 }, { x: 7, y: 1, file: 2 },
+  { x: 8, y: 3, file: 3 }, { x: 12, y: 3, file: 2 },
+  { x: 3, y: 5, file: 3 }, { x: 9, y: 5, file: 2 },
+  { x: 2, y: 7, file: 3 }, { x: 12, y: 7, file: 2 },
+  { x: 5, y: 9, file: 3 }, { x: 9, y: 9, file: 2 },
+  { x: 2, y: 11, file: 3 }, { x: 10, y: 11, file: 2 },
+];
+
+const LEVEL_2_OBSTACLES = [
+  { x: 5, y: 5, file: 2 }, { x: 21, y: 11, file: 2 },
+  { x: 11, y: 3, file: 2 }, { x: 7, y: 13, file: 2 },
+  { x: 9, y: 9, file: 3 }, { x: 15, y: 17, file: 3 },
+  { x: 1, y: 17, file: 3 }, { x: 23, y: 11, file: 3 },
+  { x: 3, y: 17, file: 4 }, { x: 19, y: 21, file: 4 },
+  { x: 7, y: 19, file: 4 }, { x: 15, y: 5, file: 4 },
+  { x: 13, y: 7, file: 5 }, { x: 17, y: 3, file: 5 },
+  { x: 11, y: 19, file: 5 }, { x: 5, y: 11, file: 5 },
+];
+
+function placeObstacles(list) {
+  const box = new THREE.Box3();
+  const center = new THREE.Vector3();
+  for (const obsData of list) {
+    const cfg = OBSTACLE_CONFIG[obsData.file];
+    if (!cfg || !obstacleModels[obsData.file]) return;
+    const model = obstacleModels[obsData.file].clone();
+    const pos = cellToWorld(obsData.x, obsData.y);
+    model.scale.set(cfg.scale, cfg.scale, cfg.scale);
+    model.rotation.y = Math.random() * Math.PI * 2;
+    box.setFromObject(model);
+    if (box.min.y !== Infinity) {
+      model.position.set(pos.x, -box.min.y, pos.z);
+    } else {
+      model.position.set(pos.x, 0, pos.z);
+    }
+    scene.add(model);
+    obstacleMeshes.push(model);
+    obstaclePositions.push({ x: pos.x, z: pos.z, radius: cfg.radius });
+  }
+}
+
+function tryPlaceObstacles() {
+  if (obstacleMeshes.length > 0) return;
+  const list = currentLevel === 1 ? LEVEL_1_OBSTACLES : currentLevel === 2 ? LEVEL_2_OBSTACLES : null;
+  if (!list) return;
+  const available = list.filter(o => obstacleModels[o.file]);
+  if (available.length) placeObstacles(available);
+}
+
+const modelsToLoad = [2, 3, 4, 5].map(f =>
+  loadObjModel(OBSTACLE_CONFIG[f].url, OBSTACLE_CONFIG[f].color)
+    .then(m => { obstacleModels[f] = m; })
+    .catch(e => console.error("Error cargando obstáculo " + f + ":", e))
+);
+Promise.all(modelsToLoad).then(tryPlaceObstacles);
+
 // ─── TEXTURAS Y MATERIALES ─────────────────────────────────────────────────
 const textureLoader = new THREE.TextureLoader();
-const wallTexture = textureLoader.load(wallUrl);
-const brownWallTexture = textureLoader.load(brownWallUrl);
-const whiteWallTexture = textureLoader.load(whiteWallUrl);
+const wallTexture = textureLoader.load("/src/assets/textures/textura_amarilla.png");
+const brownWallTexture = textureLoader.load("/src/assets/textures/textura_marron.png");
+const whiteWallTexture = textureLoader.load("/src/assets/textures/textura_blanca.png");
 wallTexture.colorSpace = THREE.SRGBColorSpace;
 wallTexture.wrapS = THREE.RepeatWrapping;
 wallTexture.wrapT = THREE.RepeatWrapping;
@@ -160,6 +269,14 @@ let mapData, exitCell;
 let floorMesh, ceilingMesh, horizontalWallMesh, verticalWallMesh, exitMesh, exitLight;
 let darkZoneMeshes = [];
 let bloodMeshes = [];
+let isDead = false;
+let deathTimer = 0;
+let obstacleMeshes = [];
+let obstaclePositions = [];
+let male = null;
+let maleMixer = null;
+let malePatrolPath = [];
+let malePathIndex = 0;
 let level3Lights = [];
 let level3Ambience = { osc: null, gain: null, pulseId: null };
 let level3WallTexture = null;
@@ -178,6 +295,54 @@ let currentCeilingMaterial = ceilingMaterial;
 
 // Función que carga un nivel específico
 // Parámetros: levelNum = número del nivel, mapWidth/Height = tamaño del mapa, walkLength = complejidad
+
+// ─── PATHFINDING ────────────────────────────────────────────────────────────
+function aStar(startX, startY, endX, endY, grid) {
+  const rows = grid.length;
+  const cols = grid[0].length;
+  const openSet = [{ x: startX, y: startY, f: 0, g: 0, h: Math.abs(endX - startX) + Math.abs(endY - startY) }];
+  const cameFrom = new Map();
+  const gScore = new Map();
+  const key = (x, y) => `${x},${y}`;
+  gScore.set(key(startX, startY), 0);
+
+  while (openSet.length > 0) {
+    openSet.sort((a, b) => a.f - b.f);
+    const current = openSet.shift();
+    const ck = key(current.x, current.y);
+    if (current.x === endX && current.y === endY) {
+      const path = [];
+      let c = ck;
+      while (cameFrom.has(c)) {
+        const [px, py] = c.split(',').map(Number);
+        path.unshift({ x: px, y: py });
+        c = cameFrom.get(c);
+      }
+      path.unshift({ x: startX, y: startY });
+      return path;
+    }
+    const neighbors = [
+      { x: current.x - 1, y: current.y },
+      { x: current.x + 1, y: current.y },
+      { x: current.x, y: current.y - 1 },
+      { x: current.x, y: current.y + 1 }
+    ];
+    for (const n of neighbors) {
+      if (n.x < 0 || n.x >= cols || n.y < 0 || n.y >= rows) continue;
+      if (grid[n.y][n.x] === 1) continue;
+      const nk = key(n.x, n.y);
+      const tentativeG = gScore.get(ck) + 1;
+      if (!gScore.has(nk) || tentativeG < gScore.get(nk)) {
+        gScore.set(nk, tentativeG);
+        cameFrom.set(nk, ck);
+        const h = Math.abs(endX - n.x) + Math.abs(endY - n.y);
+        openSet.push({ x: n.x, y: n.y, f: tentativeG + h, g: tentativeG, h });
+      }
+    }
+  }
+  return null;
+}
+
 function setupLevel(levelNum) {
   // Remover meshes del nivel anterior
   if (floorMesh) { scene.remove(floorMesh); floorMesh.dispose(); }
@@ -207,6 +372,31 @@ function setupLevel(levelNum) {
   for (const l of level4Lights) scene.remove(l);
   level4Lights = [];
   stopLevel4Ambience();
+
+  for (const m of obstacleMeshes) {
+    scene.remove(m);
+    m.traverse(child => {
+      if (child.isMesh) {
+        child.geometry?.dispose();
+        if (child.material) {
+          if (Array.isArray(child.material)) child.material.forEach(mat => mat.dispose());
+          else child.material.dispose();
+        }
+      }
+    });
+  }
+  obstacleMeshes = [];
+  obstaclePositions = [];
+
+  if (male) {
+    scene.remove(male);
+    if (maleMixer) maleMixer.stopAllAction();
+    male = null;
+    maleMixer = null;
+    malePatrolPath = [];
+    malePathIndex = 0;
+  }
+  scene.children.filter(c => c.userData?._isDebug).forEach(c => scene.remove(c));
 
   // Configurar parámetros según el nivel
   const levelConfig = {
@@ -306,6 +496,8 @@ function setupLevel(levelNum) {
   isWalkableAt = (pos) => { const c = worldToCell(pos); return isWalkableCell(c.x, c.y); };
   canMoveTo = (pos) => { for (const o of collisionSamples) { tempSample.copy(pos).add(o); if (!isWalkableAt(tempSample)) return false; } return true; };
 
+
+
   const findMarkerCell = (marker) => {
     for (let y = 0; y < mapHeight; y += 1) {
       for (let x = 0; x < mapWidth; x += 1) {
@@ -392,6 +584,19 @@ function setupLevel(levelNum) {
   exitMesh = new THREE.Mesh(exitGeo, exitMat);
   exitMesh.position.set(exitCell.x, 1.6, exitCell.z);
   scene.add(exitMesh);
+
+  tryPlaceObstacles();
+  trySpawnEnemyLevel1();
+
+  // DEBUG: marcador verde EN la celda de inicio en todos los niveles
+  const startWorld = cellToWorld(startMarkerCell.x, startMarkerCell.y);
+  const dbgMarker = new THREE.Mesh(
+    new THREE.BoxGeometry(0.4, 5, 0.4),
+    new THREE.MeshBasicMaterial({ color: 0x00ff00 })
+  );
+  dbgMarker.position.set(startWorld.x, 2.5, startWorld.z);
+  dbgMarker.userData._isDebug = true;
+  scene.add(dbgMarker);
 
   if (levelNum === 3) {
     const darkZoneGeometry = new THREE.BoxGeometry(cellSize * 1.6, wallHeight + 0.1, cellSize * 1.6);
@@ -503,12 +708,83 @@ function setupLevel(levelNum) {
   isGrounded = true;
   isCrouching = false;
   isRunning = false;
+  currentSpeed = 0;
+  if (typeof window !== 'undefined') window.currentBobOffset = 0;
   currentEyeHeight = STAND_EYE_HEIGHT;
   camera.position.y = STAND_EYE_HEIGHT;
 }
 
 // Cargar el primer nivel
 setupLevel(1);
+
+// ─── SPAWN ENEMIGO NIVEL 1 ──────────────────────────────────────────────────
+function trySpawnEnemyLevel1() {
+  if (currentLevel !== 1 || !maleModel || male) return;
+  try {
+    const model = maleModel.scene.clone();
+    model.traverse(child => {
+      if (child.isMesh) {
+        child.material = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.8, metalness: 0.1 });
+      }
+    });
+
+    const spawnCell = { x: 13, y: 11 };
+    const spawnPos = cellToWorld(spawnCell.x, spawnCell.y);
+    model.position.set(spawnPos.x, 0, spawnPos.z);
+    model.userData.collisionRadius = 1.5;
+
+    maleMixer = new THREE.AnimationMixer(model);
+    const idleClip = maleModel.animations.find(a => a.name === "animation.howler.idle");
+    if (idleClip) {
+      maleMixer.clipAction(idleClip).play();
+    }
+
+    scene.add(model);
+    male = model;
+    male.userData.lastPathTime = 0;
+    male.userData.path = [];
+    male.userData.pathIndex = 0;
+    male.userData.active = false;
+    male.userData.lostSightTimer = 0;
+    male.userData.currentAnim = "";
+
+    console.log("Nivel 1: Enemigo agregado en (3,11)");
+  } catch (e) {
+    console.error("Error spawning enemy:", e);
+  }
+}
+
+// ─── LÍNEA DE VISIÓN (GRID BRESENHAM) ──────────────────────────────────────
+function hasLineOfSight(x1, y1, x2, y2, grid) {
+  const dx = Math.abs(x2 - x1);
+  const dy = Math.abs(y2 - y1);
+  const sx = x1 < x2 ? 1 : -1;
+  const sy = y1 < y2 ? 1 : -1;
+  let err = dx - dy;
+  let x = x1, y = y1;
+
+  while (x !== x2 || y !== y2) {
+    if (!(x === x1 && y === y1)) {
+      if (y < 0 || y >= grid.length || x < 0 || x >= grid[0].length) return false;
+      if (grid[y][x] === 1) return false;
+    }
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x += sx; }
+    if (e2 < dx) { err += dx; y += sy; }
+  }
+  return true;
+}
+
+// ─── CAMBIO DE ANIMACIÓN DEL ENEMIGO ────────────────────────────────────────
+function playMaleAnimation(name) {
+  if (!maleMixer || !male || male.userData.currentAnim === name) return;
+  male.userData.currentAnim = name;
+  maleMixer.stopAllAction();
+  const clip = maleModel.animations.find(a => a.name === name);
+  if (clip) {
+    maleMixer.clipAction(clip).reset().play();
+  }
+}
 
 // ---- Helpers para nivel 3: manchas, luces y ambiente ----
 function intToHexColor(value) {
@@ -793,10 +1069,7 @@ function stopLevel4Ambience() {
 }
 
 
-// ─── AUDIO ─────────────────────────────────────────────────────────────────
-const listener = new THREE.AudioListener();
-camera.add(listener);
-let humStarted = false;
+// (Audio section moved to top)
 
 // ─── INPUT ─────────────────────────────────────────────────────────────────
 const keys = { forward: false, back: false, left: false, right: false };
@@ -816,7 +1089,7 @@ function onKey(event, pressed) {
       if (pressed) isRunning = false;
       break;
     case "Space":
-      if (pressed && isGrounded) {
+      if (pressed && isGrounded && isLocked) {
         verticalVelocity = JUMP_VELOCITY;
         isGrounded = false;
       }
@@ -860,7 +1133,9 @@ const up        = new THREE.Vector3(0, 1, 0);
 const inputDir  = new THREE.Vector3();
 
 function attemptMove(delta) {
+  if (!isLocked && !useDebugCamera) return;
   if (useDebugCamera) return;
+  if (isDead) return;
 
   direction.z = Number(keys.forward) - Number(keys.back);
   direction.x = Number(keys.right)   - Number(keys.left);
@@ -887,6 +1162,19 @@ function attemptMove(delta) {
   playerRig.position.z += inputDir.z * dist;
   if (!canMoveTo(playerRig.position)) playerRig.position.z = prevZ;
 
+  for (const op of obstaclePositions) {
+    const dx = playerRig.position.x - op.x;
+    const dz = playerRig.position.z - op.z;
+    if (Math.hypot(dx, dz) < op.radius) {
+      isDead = true;
+      deathTimer = 0;
+      keys.forward = keys.back = keys.left = keys.right = false;
+      isRunning = false;
+      document.getElementById("death-overlay")?.classList.remove("hidden");
+      return;
+    }
+  }
+
   const distToExit = Math.hypot(playerRig.position.x - exitCell.x, playerRig.position.z - exitCell.z);
   if (distToExit < 1.5) {
     // Si completó el nivel 1, cargar nivel 2
@@ -910,7 +1198,6 @@ function attemptMove(delta) {
 // ─── LOOP ──────────────────────────────────────────────────────────────────
 let lastTime    = performance.now();
 let elapsed     = 0;
-let currentSpeed = 0;
 const bobAmplitude = 0.045;
 const bobFrequency = 9.5;
 
@@ -924,7 +1211,120 @@ function animate(time) {
   elapsed += delta;
 
   attemptMove(delta);
-  updateFlashlight(elapsed);
+
+  if (isDead) {
+    deathTimer += delta;
+    if (deathTimer > 1.5) {
+      isDead = false;
+      document.getElementById("death-overlay")?.classList.add("hidden");
+      setupLevel(currentLevel);
+    }
+  }
+
+  if (isLocked || useDebugCamera) {
+    updateFlashlight(elapsed);
+
+    if (currentLevel === 1 && !male) trySpawnEnemyLevel1();
+
+  if (male && currentLevel === 1) {
+    const playerDist = Math.hypot(
+      playerRig.position.x - male.position.x,
+      playerRig.position.z - male.position.z
+    );
+
+    const enemyCell = worldToCell(male.position);
+    const playerCell = worldToCell(playerRig.position);
+    const canSee = enemyCell && playerCell && hasLineOfSight(enemyCell.x, enemyCell.y, playerCell.x, playerCell.y, grid);
+
+    if (!male.userData.active && canSee && playerDist < 12.0) {
+      male.userData.active = true;
+      male.userData.lostSightTimer = 0;
+      console.log("Enemigo activado - te ha detectado!");
+    }
+
+    if (male.userData.active) {
+      if (canSee && playerDist < 14.0) {
+        male.userData.lostSightTimer = 0;
+      } else {
+        male.userData.lostSightTimer = (male.userData.lostSightTimer || 0) + delta;
+        if (male.userData.lostSightTimer > 2.0) {
+          male.userData.active = false;
+          male.userData.path = [];
+          male.userData.pathIndex = 0;
+          playMaleAnimation("animation.howler.idle");
+        }
+      }
+    }
+
+    if (male.userData.active) {
+      playMaleAnimation("animation.howler.run");
+
+      const pathRecalcInterval = 1.0;
+      if (playerDist > 2.0 && (!male.userData.lastPathTime || elapsed - male.userData.lastPathTime > pathRecalcInterval)) {
+        male.userData.lastPathTime = elapsed;
+        if (enemyCell && playerCell) {
+          const newPath = aStar(enemyCell.x, enemyCell.y, playerCell.x, playerCell.y, grid);
+          if (newPath && newPath.length > 1) {
+            male.userData.path = newPath.slice(1);
+            male.userData.pathIndex = 0;
+          }
+        }
+      }
+
+      let targetPos;
+      if (playerDist < 2.5) {
+        targetPos = { x: playerRig.position.x, z: playerRig.position.z };
+      } else {
+        const path = male.userData.path;
+        if (path && path.length > 0 && male.userData.pathIndex < path.length) {
+          targetPos = cellToWorld(path[male.userData.pathIndex].x, path[male.userData.pathIndex].y);
+        } else {
+          targetPos = { x: playerRig.position.x, z: playerRig.position.z };
+        }
+      }
+
+      const dx = targetPos.x - male.position.x;
+      const dz = targetPos.z - male.position.z;
+      const dist = Math.hypot(dx, dz);
+
+      if (dist > 0.01) {
+        male.rotation.y = Math.atan2(dx, dz) + Math.PI;
+      }
+
+      if (dist > 0.6 && playerDist > 1.5) {
+        const speed = MALE_SPEED * delta;
+        const moveX = (dx / dist) * speed;
+        const moveZ = (dz / dist) * speed;
+
+        const testX = male.position.x + moveX;
+        if (canMoveTo(new THREE.Vector3(testX, 0, male.position.z))) {
+          male.position.x = testX;
+        }
+
+        const testZ = male.position.z + moveZ;
+        if (canMoveTo(new THREE.Vector3(male.position.x, 0, testZ))) {
+          male.position.z = testZ;
+        }
+      }
+
+      if (dist < 0.6 && male.userData.path && male.userData.pathIndex < male.userData.path.length) {
+        male.userData.pathIndex++;
+      }
+    } else {
+      playMaleAnimation("animation.howler.idle");
+    }
+
+    if (maleMixer) maleMixer.update(delta);
+
+    if (playerDist < (male.userData.collisionRadius || 1.2) && !isDead) {
+      playMaleAnimation("animation.howler.attack");
+      isDead = true;
+      deathTimer = 0;
+      keys.forward = keys.back = keys.left = keys.right = false;
+      isRunning = false;
+      document.getElementById("death-overlay")?.classList.remove("hidden");
+    }
+  }
 
   // Flicker de luces y efectos específicos del nivel 3
   if (currentLevel === 3) {
@@ -959,10 +1359,15 @@ function animate(time) {
   const targetSpeed = inputDir.length() * (isCrouching ? CROUCH_SPEED : isRunning ? RUN_SPEED : WALK_SPEED);
   currentSpeed += (targetSpeed - currentSpeed) * 15 * delta;
   const speedFactor = Math.min(currentSpeed / RUN_SPEED, 1);
-  const bobOffset = isGrounded ? Math.sin(elapsed * bobFrequency) * bobAmplitude * speedFactor : 0;
+  const targetBobOffset = isGrounded ? Math.sin(elapsed * bobFrequency) * bobAmplitude * speedFactor : 0;
+  
+  if (typeof window.currentBobOffset === 'undefined') window.currentBobOffset = 0;
+  window.currentBobOffset += (targetBobOffset - window.currentBobOffset) * 15 * delta;
+  
   const targetEyeHeight = isCrouching ? CROUCH_EYE_HEIGHT : STAND_EYE_HEIGHT;
   currentEyeHeight += (targetEyeHeight - currentEyeHeight) * 12 * delta;
-  camera.position.y = currentEyeHeight + bobOffset;
+  camera.position.y = currentEyeHeight + window.currentBobOffset;
+  }
 
   if (useDebugCamera) debugControls.update();
 
@@ -976,6 +1381,7 @@ function onResize() {
   debugCamera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 }
+
 window.addEventListener("resize", onResize);
 
 requestAnimationFrame(animate);

@@ -85,8 +85,46 @@ canvas {
   display: none;
 }
 
+#death-overlay.hidden {
+  display: none;
+}
+
 .hud .label {
   background: rgba(10, 9, 5, 0.6);
   padding: 0.5rem 0.75rem;
   border: 1px solid rgba(239, 226, 176, 0.25);
+}
+
+#death-overlay {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(80, 0, 0, 0.75);
+  color: #ff4444;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: clamp(1.5rem, 3vw, 3rem);
+  z-index: 3;
+}
+
+#death-overlay .card {
+  padding: 2.5rem 3rem;
+  border: 1px solid rgba(255, 68, 68, 0.3);
+  background: rgba(20, 5, 5, 0.9);
+  text-align: center;
+  max-width: 520px;
+}
+
+#death-overlay p {
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  letter-spacing: 0.04em;
+  margin-top: 1rem;
+  text-transform: none;
+  font-size: 0.95rem;
+  color: rgba(255, 68, 68, 0.7);
 }
