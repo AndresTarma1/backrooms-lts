@@ -83,7 +83,9 @@ export function updateStamina(delta, isRunning) {
 
 export function updateBattery(delta, flashlightOn = true) {
   if (flashlightOn) {
-    battery = Math.max(0, battery - 2 * delta);
+    battery = Math.max(0, battery - 0.5 * delta);
+  } else if (battery < 100) {
+    battery = Math.min(100, battery + 0.15 * delta);
   }
   updateBatteryBar();
 }
