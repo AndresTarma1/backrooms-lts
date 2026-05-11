@@ -8,6 +8,10 @@ import { generateMapLevel2 } from "./mapGeneratorLevel2.js";
 import { generateMapLevel3 } from "./mapGeneratorLevel3.js";
 import { generateMapLevel4 } from "./mapGeneratorLevel4.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
+import { playFootstep, playHurt, playDeath, resumeAudio, initAudio, startAmbient, stopAmbient } from "./audio.js";
+import { playerHealth, isDeadFromHealth, takeDamage, resetHealth, updateHealth, stamina, battery, updateStamina, updateBattery, getBatteryFactor } from "./hud.js";
+
+initAudio().then(() => startAmbient(currentLevel));
 
 const overlay = document.querySelector(".overlay");
 const hud = document.querySelector(".hud");
@@ -67,10 +71,16 @@ let humStarted = false;
 
 hud.classList.remove("hidden");
 
+let isPaused = false;
+const pauseMenu = document.getElementById("pause-menu");
+const victoryOverlay = document.getElementById("victory-overlay");
+
 controls.addEventListener("lock", () => {
   isLocked = true;
+  isPaused = false;
   hud.classList.remove("hidden");
   if (overlay) overlay.classList.add("hidden");
+  if (pauseMenu) pauseMenu.classList.add("hidden");
   if (!humStarted) {
     listener.context.resume();
     humStarted = true;
@@ -79,13 +89,15 @@ controls.addEventListener("lock", () => {
 
 controls.addEventListener("unlock", () => {
   isLocked = false;
-  lockRetryAt = performance.now() + 1200;
-  hud.classList.add("hidden");
-  if (overlay) overlay.classList.remove("hidden");
+  if (!isPaused && !isDead) {
+    lockRetryAt = performance.now() + 1200;
+    hud.classList.add("hidden");
+    if (overlay) overlay.classList.remove("hidden");
+  }
 });
 
 function tryLockControls() {
-  if (isLocked || useDebugCamera) return;
+  if (isLocked || useDebugCamera || isPaused) return;
   if (performance.now() < lockRetryAt) return;
   controls.lock();
 }
@@ -273,6 +285,7 @@ let isDead = false;
 let deathTimer = 0;
 let obstacleMeshes = [];
 let obstaclePositions = [];
+let obstacleDamageCooldown = 0;
 let male = null;
 let maleMixer = null;
 let malePatrolPath = [];
@@ -344,6 +357,12 @@ function aStar(startX, startY, endX, endY, grid) {
 }
 
 function setupLevel(levelNum) {
+  resetHealth();
+  obstacleDamageCooldown = 0;
+  stopAmbient();
+  isPaused = false;
+  if (pauseMenu) pauseMenu.classList.add("hidden");
+  if (victoryOverlay) victoryOverlay.classList.add("hidden");
   // Remover meshes del nivel anterior
   if (floorMesh) { scene.remove(floorMesh); floorMesh.dispose(); }
   if (ceilingMesh) { scene.remove(ceilingMesh); ceilingMesh.dispose(); }
@@ -712,6 +731,7 @@ function setupLevel(levelNum) {
   if (typeof window !== 'undefined') window.currentBobOffset = 0;
   currentEyeHeight = STAND_EYE_HEIGHT;
   camera.position.y = STAND_EYE_HEIGHT;
+  startAmbient(levelNum);
 }
 
 // Cargar el primer nivel
@@ -1098,6 +1118,18 @@ function onKey(event, pressed) {
 }
 document.addEventListener("keydown", (e) => {
   onKey(e, true);
+  if (e.code === "Escape" && isPaused) {
+    resumeGame();
+  }
+}, { capture: true });
+
+document.addEventListener("keydown", (e) => {
+  if (e.code !== "Escape") return;
+  if (isLocked) {
+    isPaused = true;
+    if (pauseMenu) pauseMenu.classList.remove("hidden");
+    hud.classList.add("hidden");
+  }
   if (e.code === "KeyC") {
     useDebugCamera = !useDebugCamera;
     if (useDebugCamera) {
@@ -1112,6 +1144,24 @@ document.addEventListener("keydown", (e) => {
   }
 });
 document.addEventListener("keyup", (e) => onKey(e, false));
+
+window.resumeGame = function() {
+  isPaused = false;
+  if (pauseMenu) pauseMenu.classList.add("hidden");
+  controls.lock();
+};
+
+window.restartLevel = function() {
+  isPaused = false;
+  if (pauseMenu) pauseMenu.classList.add("hidden");
+  setupLevel(currentLevel);
+  controls.lock();
+};
+
+window.backToMenu = function() {
+  stopAmbient();
+  window.location.href = "/index.html";
+};
 
 // ─── COLISIONES ────────────────────────────────────────────────────────────
 const playerRadius = 0.35;
@@ -1151,7 +1201,8 @@ function attemptMove(delta) {
   inputDir.addScaledVector(right,   direction.x);
   if (inputDir.lengthSq() > 0) inputDir.normalize();
 
-  const moveSpeed = isCrouching ? CROUCH_SPEED : isRunning ? RUN_SPEED : WALK_SPEED;
+  const canRun = isRunning && stamina > 0;
+  const moveSpeed = isCrouching ? CROUCH_SPEED : canRun ? RUN_SPEED : WALK_SPEED;
   const dist = moveSpeed * delta;
   const prevX = playerRig.position.x;
   const prevZ = playerRig.position.z;
@@ -1166,11 +1217,19 @@ function attemptMove(delta) {
     const dx = playerRig.position.x - op.x;
     const dz = playerRig.position.z - op.z;
     if (Math.hypot(dx, dz) < op.radius) {
-      isDead = true;
-      deathTimer = 0;
-      keys.forward = keys.back = keys.left = keys.right = false;
-      isRunning = false;
-      document.getElementById("death-overlay")?.classList.remove("hidden");
+      if (obstacleDamageCooldown <= 0) {
+        takeDamage(25);
+        playHurt();
+        obstacleDamageCooldown = 1.5;
+        if (isDeadFromHealth) {
+          isDead = true;
+          deathTimer = 0;
+          playDeath();
+          keys.forward = keys.back = keys.left = keys.right = false;
+          isRunning = false;
+          document.getElementById("death-overlay")?.classList.remove("hidden");
+        }
+      }
       return;
     }
   }
@@ -1188,9 +1247,11 @@ function attemptMove(delta) {
       currentLevel = 4;
       setupLevel(4);
     } else {
-      // Si completó el nivel 4, mostrar victoria final
-      console.log("¡HAS ESCAPADO! Encontraste la salida de los Backrooms.");
-      controls.unlock();
+      stopAmbient();
+      isLocked = false;
+      hud.classList.add("hidden");
+      if (victoryOverlay) victoryOverlay.classList.remove("hidden");
+      if (pauseMenu) pauseMenu.classList.add("hidden");
     }
   }
 }
@@ -1200,9 +1261,12 @@ let lastTime    = performance.now();
 let elapsed     = 0;
 const bobAmplitude = 0.045;
 const bobFrequency = 9.5;
+let prevBobSin = 0;
+let footstepTimer = 0;
 
 function updateFlashlight(t) {
-  flashlight.intensity = flashlightBaseIntensity + Math.sin(t * 18) * flashlightPulseAmplitude;
+  const bf = getBatteryFactor();
+  flashlight.intensity = (flashlightBaseIntensity + Math.sin(t * 18) * flashlightPulseAmplitude) * bf;
 }
 
 function animate(time) {
@@ -1211,12 +1275,17 @@ function animate(time) {
   elapsed += delta;
 
   attemptMove(delta);
+  updateHealth(delta);
+  updateStamina(delta, isRunning && stamina > 0);
+  updateBattery(delta);
+  if (obstacleDamageCooldown > 0) obstacleDamageCooldown -= delta;
 
   if (isDead) {
     deathTimer += delta;
     if (deathTimer > 1.5) {
       isDead = false;
       document.getElementById("death-overlay")?.classList.add("hidden");
+      resetHealth();
       setupLevel(currentLevel);
     }
   }
@@ -1320,6 +1389,7 @@ function animate(time) {
       playMaleAnimation("animation.howler.attack");
       isDead = true;
       deathTimer = 0;
+      playDeath();
       keys.forward = keys.back = keys.left = keys.right = false;
       isRunning = false;
       document.getElementById("death-overlay")?.classList.remove("hidden");
@@ -1359,7 +1429,15 @@ function animate(time) {
   const targetSpeed = inputDir.length() * (isCrouching ? CROUCH_SPEED : isRunning ? RUN_SPEED : WALK_SPEED);
   currentSpeed += (targetSpeed - currentSpeed) * 15 * delta;
   const speedFactor = Math.min(currentSpeed / RUN_SPEED, 1);
-  const targetBobOffset = isGrounded ? Math.sin(elapsed * bobFrequency) * bobAmplitude * speedFactor : 0;
+  const bobSin = Math.sin(elapsed * bobFrequency);
+  const targetBobOffset = isGrounded ? bobSin * bobAmplitude * speedFactor : 0;
+  const effectiveRunning = isRunning && stamina > 0 && !isCrouching;
+  footstepTimer -= delta;
+  if (isGrounded && speedFactor > 0.2 && prevBobSin <= 0 && bobSin > 0 && footstepTimer <= 0) {
+    playFootstep(effectiveRunning);
+    footstepTimer = effectiveRunning ? 0.3 : 0.5;
+  }
+  prevBobSin = bobSin;
   
   if (typeof window.currentBobOffset === 'undefined') window.currentBobOffset = 0;
   window.currentBobOffset += (targetBobOffset - window.currentBobOffset) * 15 * delta;
