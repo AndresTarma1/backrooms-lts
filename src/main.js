@@ -11,7 +11,7 @@ import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { playFootstep, playHurt, playDeath, resumeAudio, initAudio, startAmbient, stopAmbient } from "./audio.js";
 import { playerHealth, isDeadFromHealth, takeDamage, resetHealth, updateHealth, stamina, battery, updateStamina, updateBattery, getBatteryFactor } from "./hud.js";
 
-initAudio().then(() => startAmbient(currentLevel));
+initAudio().then(() => { startAmbient(currentLevel); });
 
 const overlay = document.querySelector(".overlay");
 const hud = document.querySelector(".hud");
@@ -74,6 +74,9 @@ hud.classList.remove("hidden");
 let isPaused = false;
 const pauseMenu = document.getElementById("pause-menu");
 const victoryOverlay = document.getElementById("victory-overlay");
+const glitchOverlay = document.getElementById("glitch-overlay");
+let damageFlashTimer = 0;
+const damageFlashEl = document.getElementById("damage-flash");
 
 controls.addEventListener("lock", () => {
   isLocked = true;
@@ -85,6 +88,7 @@ controls.addEventListener("lock", () => {
     listener.context.resume();
     humStarted = true;
   }
+  startAmbient(currentLevel);
 });
 
 controls.addEventListener("unlock", () => {
@@ -128,6 +132,7 @@ camera.add(flashlight.target);
 
 let flashlightBaseIntensity = 2.6;
 let flashlightPulseAmplitude = 0.12;
+let flashlightOn = true;
 
 const fill = new THREE.PointLight(0xfff5c7, 0.18, 7.5);
 fill.position.set(0, 0, 2.5);
@@ -135,6 +140,7 @@ camera.add(fill);
 
 // ─── MODELO LINTERNA ───────────────────────────────────────────────────────
 const gltfLoader = new GLTFLoader();
+let flashlightModel = null;
 gltfLoader.load("/src/assets/models/flashlight.glb", (gltf) => {
   const model = gltf.scene;
   model.traverse((child) => {
@@ -156,7 +162,9 @@ gltfLoader.load("/src/assets/models/flashlight.glb", (gltf) => {
   model.scale.set(0.001, 0.001, 0.001);
   model.position.set(0.15, -0.10, -0.10);
   model.rotation.y = Math.PI;
+  model.userData.basePos = new THREE.Vector3(0.15, -0.10, -0.10);
   camera.add(model);
+  flashlightModel = model;
 });
 
 let maleModel = null;
@@ -164,7 +172,7 @@ gltfLoader.load("/src/assets/models/perseguidor.glb",
   (gltf) => {
     console.log("perseguidor.glb loaded");
     maleModel = gltf;
-    trySpawnEnemyLevel1();
+    // spawn handled in setupLevel + animate loop retry
   },
   undefined,
   (err) => console.error("perseguidor.glb load error:", err)
@@ -286,6 +294,7 @@ let deathTimer = 0;
 let obstacleMeshes = [];
 let obstaclePositions = [];
 let obstacleDamageCooldown = 0;
+let levelWalkableCells = [];
 let male = null;
 let maleMixer = null;
 let malePatrolPath = [];
@@ -359,10 +368,12 @@ function aStar(startX, startY, endX, endY, grid) {
 function setupLevel(levelNum) {
   resetHealth();
   obstacleDamageCooldown = 0;
+  flashlightOn = true;
   stopAmbient();
   isPaused = false;
   if (pauseMenu) pauseMenu.classList.add("hidden");
   if (victoryOverlay) victoryOverlay.classList.add("hidden");
+  if (glitchOverlay) { glitchOverlay.classList.add("hidden"); glitchOverlay.classList.remove("active", "danger"); }
   // Remover meshes del nivel anterior
   if (floorMesh) { scene.remove(floorMesh); floorMesh.dispose(); }
   if (ceilingMesh) { scene.remove(ceilingMesh); ceilingMesh.dispose(); }
@@ -533,6 +544,7 @@ function setupLevel(levelNum) {
   for (let y = 0; y < mapHeight; y++)
     for (let x = 0; x < mapWidth; x++)
       if (isWalkableCell(x, y)) walkableCells.push({ x, y });
+  levelWalkableCells = walkableCells;
 
   // Crear geometrías instanciadas para suelo, techo y paredes
   const floorGeometry = new THREE.PlaneGeometry(1, 1);
@@ -605,7 +617,7 @@ function setupLevel(levelNum) {
   scene.add(exitMesh);
 
   tryPlaceObstacles();
-  trySpawnEnemyLevel1();
+  spawnEnemy(levelNum);
 
   // DEBUG: marcador verde EN la celda de inicio en todos los niveles
   const startWorld = cellToWorld(startMarkerCell.x, startMarkerCell.y);
@@ -737,9 +749,16 @@ function setupLevel(levelNum) {
 // Cargar el primer nivel
 setupLevel(1);
 
-// ─── SPAWN ENEMIGO NIVEL 1 ──────────────────────────────────────────────────
-function trySpawnEnemyLevel1() {
-  if (currentLevel !== 1 || !maleModel || male) return;
+// ─── SPAWN ENEMIGO ──────────────────────────────────────────────────────────
+const SPAWN_CELLS = {
+  1: { x: 13, y: 11 },
+  2: { x: 12, y: 12 },
+  3: { x: 12, y: 12 },
+  4: { x: 13, y: 13 },
+};
+
+function spawnEnemy(levelNum) {
+  if (!maleModel || male) return;
   try {
     const model = maleModel.scene.clone();
     model.traverse(child => {
@@ -748,7 +767,7 @@ function trySpawnEnemyLevel1() {
       }
     });
 
-    const spawnCell = { x: 13, y: 11 };
+    const spawnCell = SPAWN_CELLS[levelNum] || { x: 3, y: 3 };
     const spawnPos = cellToWorld(spawnCell.x, spawnCell.y);
     model.position.set(spawnPos.x, 0, spawnPos.z);
     model.userData.collisionRadius = 1.5;
@@ -767,8 +786,10 @@ function trySpawnEnemyLevel1() {
     male.userData.active = false;
     male.userData.lostSightTimer = 0;
     male.userData.currentAnim = "";
+    male.userData.patrolTarget = null;
+    male.userData.patrolTimer = 0;
 
-    console.log("Nivel 1: Enemigo agregado en (3,11)");
+    console.log("Nivel " + levelNum + ": Enemigo agregado en (" + spawnCell.x + "," + spawnCell.y + ")");
   } catch (e) {
     console.error("Error spawning enemy:", e);
   }
@@ -1130,6 +1151,9 @@ document.addEventListener("keydown", (e) => {
       debugControls.enabled = false;
     }
   }
+  if (e.code === "KeyF") {
+    flashlightOn = !flashlightOn;
+  }
 });
 
 document.addEventListener("keydown", (e) => {
@@ -1220,6 +1244,7 @@ function attemptMove(delta) {
       if (obstacleDamageCooldown <= 0) {
         takeDamage(25);
         playHurt();
+        damageFlashTimer = 0.15;
         obstacleDamageCooldown = 1.5;
         if (isDeadFromHealth) {
           isDead = true;
@@ -1265,6 +1290,10 @@ let prevBobSin = 0;
 let footstepTimer = 0;
 
 function updateFlashlight(t) {
+  if (!flashlightOn) {
+    flashlight.intensity = 0;
+    return;
+  }
   const bf = getBatteryFactor();
   flashlight.intensity = (flashlightBaseIntensity + Math.sin(t * 18) * flashlightPulseAmplitude) * bf;
 }
@@ -1280,6 +1309,27 @@ function animate(time) {
   updateBattery(delta);
   if (obstacleDamageCooldown > 0) obstacleDamageCooldown -= delta;
 
+  // Flash de daño
+  if (damageFlashTimer > 0) {
+    damageFlashTimer -= delta;
+    if (damageFlashEl) damageFlashEl.classList.add("active");
+  } else if (damageFlashEl) {
+    damageFlashEl.classList.remove("active");
+  }
+
+  // Linterna se apaga sola si batería llega a 0
+  if (battery <= 0 && flashlightOn) {
+    flashlightOn = false;
+  }
+
+  // Viñeta dinámica según batería/linterna
+  const vignette = document.getElementById("vignette");
+  if (vignette) {
+    const darkFactor = flashlightOn ? Math.max(0, 1 - battery / 20) : 1;
+    const shadowSize = 60 + darkFactor * 100;
+    vignette.style.boxShadow = `inset 0 0 ${shadowSize}px rgba(0,0,0,${0.5 + darkFactor * 0.3}), inset 0 0 40px rgba(0,0,0,0.4)`;
+  }
+
   if (isDead) {
     deathTimer += delta;
     if (deathTimer > 1.5) {
@@ -1293,9 +1343,9 @@ function animate(time) {
   if (isLocked || useDebugCamera) {
     updateFlashlight(elapsed);
 
-    if (currentLevel === 1 && !male) trySpawnEnemyLevel1();
+    if (!male) spawnEnemy(currentLevel);
 
-  if (male && currentLevel === 1) {
+  if (male) {
     const playerDist = Math.hypot(
       playerRig.position.x - male.position.x,
       playerRig.position.z - male.position.z
@@ -1325,6 +1375,10 @@ function animate(time) {
       }
     }
 
+    // Movimiento compartido: chase o patrol
+    let targetPos = null;
+    let isMoving = false;
+
     if (male.userData.active) {
       playMaleAnimation("animation.howler.run");
 
@@ -1340,7 +1394,6 @@ function animate(time) {
         }
       }
 
-      let targetPos;
       if (playerDist < 2.5) {
         targetPos = { x: playerRig.position.x, z: playerRig.position.z };
       } else {
@@ -1351,7 +1404,42 @@ function animate(time) {
           targetPos = { x: playerRig.position.x, z: playerRig.position.z };
         }
       }
+      isMoving = true;
+    } else {
+      // PATRULLAJE
+      male.userData.patrolTimer -= delta;
+      if (!male.userData.patrolTarget || male.userData.patrolTimer <= 0) {
+        if (levelWalkableCells.length > 1) {
+          let pick;
+          const enemyCell = worldToCell(male.position);
+          let tries = 0;
+          do {
+            pick = levelWalkableCells[Math.floor(Math.random() * levelWalkableCells.length)];
+            tries++;
+          } while (tries < 10 && pick && pick.x === enemyCell.x && pick.y === enemyCell.y);
+          if (pick) {
+            const path = aStar(enemyCell.x, enemyCell.y, pick.x, pick.y, grid);
+            if (path && path.length > 1) {
+              male.userData.path = path.slice(1);
+              male.userData.pathIndex = 0;
+            }
+            male.userData.patrolTarget = pick;
+          }
+        }
+        male.userData.patrolTimer = 4 + Math.random() * 6;
+      }
 
+      const patrolPath = male.userData.path;
+      if (patrolPath && patrolPath.length > 0 && male.userData.pathIndex < patrolPath.length) {
+        targetPos = cellToWorld(patrolPath[male.userData.pathIndex].x, patrolPath[male.userData.pathIndex].y);
+        isMoving = true;
+        playMaleAnimation("animation.howler.run");
+      } else {
+        playMaleAnimation("animation.howler.idle");
+      }
+    }
+
+    if (isMoving && targetPos) {
       const dx = targetPos.x - male.position.x;
       const dz = targetPos.z - male.position.z;
       const dist = Math.hypot(dx, dz);
@@ -1360,7 +1448,8 @@ function animate(time) {
         male.rotation.y = Math.atan2(dx, dz) + Math.PI;
       }
 
-      if (dist > 0.6 && playerDist > 1.5) {
+      const moveCheckDist = male.userData.active ? playerDist : dist;
+      if (dist > 0.6 && moveCheckDist > 1.5) {
         const speed = MALE_SPEED * delta;
         const moveX = (dx / dist) * speed;
         const moveZ = (dz / dist) * speed;
@@ -1378,12 +1467,30 @@ function animate(time) {
 
       if (dist < 0.6 && male.userData.path && male.userData.pathIndex < male.userData.path.length) {
         male.userData.pathIndex++;
+        if (male.userData.pathIndex >= male.userData.path.length && !male.userData.active) {
+          male.userData.patrolTarget = null;
+        }
       }
-    } else {
-      playMaleAnimation("animation.howler.idle");
     }
 
     if (maleMixer) maleMixer.update(delta);
+
+    // Efecto glitch por proximidad del enemigo
+    if (glitchOverlay) {
+      if (male.userData.active && playerDist < 8) {
+        glitchOverlay.classList.remove('hidden');
+        if (playerDist < 3.5) {
+          glitchOverlay.classList.add('danger');
+          glitchOverlay.classList.remove('active');
+        } else {
+          glitchOverlay.classList.add('active');
+          glitchOverlay.classList.remove('danger');
+        }
+      } else {
+        glitchOverlay.classList.remove('active', 'danger');
+        glitchOverlay.classList.add('hidden');
+      }
+    }
 
     if (playerDist < (male.userData.collisionRadius || 1.2) && !isDead) {
       playMaleAnimation("animation.howler.attack");
@@ -1445,6 +1552,20 @@ function animate(time) {
   const targetEyeHeight = isCrouching ? CROUCH_EYE_HEIGHT : STAND_EYE_HEIGHT;
   currentEyeHeight += (targetEyeHeight - currentEyeHeight) * 12 * delta;
   camera.position.y = currentEyeHeight + window.currentBobOffset;
+
+  // Balanceo de linterna
+  if (flashlightModel && flashlightModel.userData.basePos) {
+    const bp = flashlightModel.userData.basePos;
+    const bob = (window.currentBobOffset || 0) * 0.5;
+    const swayX = Math.sin(elapsed * 1.8) * 0.005;
+    const swayZ = Math.sin(elapsed * 2.3) * 0.004;
+    flashlightModel.position.x = bp.x + swayX;
+    flashlightModel.position.y = bp.y + bob + swayZ;
+    flashlightModel.position.z = bp.z + swayZ * 0.5;
+    const runTilt = currentSpeed > 5 ? 0.03 : 0;
+    flashlightModel.rotation.x = Math.sin(elapsed * 9.5) * 0.01 + runTilt;
+    flashlightModel.rotation.z = Math.sin(elapsed * 8.7) * 0.015;
+  }
   }
 
   if (useDebugCamera) debugControls.update();
