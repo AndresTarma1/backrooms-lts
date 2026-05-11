@@ -1118,18 +1118,6 @@ function onKey(event, pressed) {
 }
 document.addEventListener("keydown", (e) => {
   onKey(e, true);
-  if (e.code === "Escape" && isPaused) {
-    resumeGame();
-  }
-}, { capture: true });
-
-document.addEventListener("keydown", (e) => {
-  if (e.code !== "Escape") return;
-  if (isLocked) {
-    isPaused = true;
-    if (pauseMenu) pauseMenu.classList.remove("hidden");
-    hud.classList.add("hidden");
-  }
   if (e.code === "KeyC") {
     useDebugCamera = !useDebugCamera;
     if (useDebugCamera) {
@@ -1143,6 +1131,18 @@ document.addEventListener("keydown", (e) => {
     }
   }
 });
+
+document.addEventListener("keydown", (e) => {
+  if (e.code !== "Escape") return;
+  if (isPaused) {
+    resumeGame();
+    return;
+  }
+  isPaused = true;
+  if (pauseMenu) pauseMenu.classList.remove("hidden");
+  hud.classList.add("hidden");
+}, { capture: true });
+
 document.addEventListener("keyup", (e) => onKey(e, false));
 
 window.resumeGame = function() {
